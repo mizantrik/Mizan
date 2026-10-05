@@ -1,0 +1,176 @@
+Вот скрипт ESP специально для игры **DOORS**. Он адаптирован под специфику этой игры: показывает не только игроков, но и сущностей (монстров), их здоровье, а также подсвечивает двери.
+
+Скрипт использует `BillboardGui` и `Highlight` для визуализации.
+
+```lua
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+
+-- Конфигурация
+local Config = {
+    ShowMonsters = true,
+    ShowPlayers = true,
+    ShowDoors = true,
+    MaxDistance = 150, -- Дистанция отображения
+    HighlightColor = Color3.fromRGB(255, 255, 255), -- Цвет подсветки по умолчанию
+    MonsterColor = Color3.fromRGB(255, 0, 0), -- Красный для монстров
+    DoorColor = Color3.fromRGB(255, 165, 0) -- Оранжевый для дверей
+}
+
+-- Список известных мобов из DOORS (можно дополнять)
+local MonsterNames = {
+    "Scout", "Ambush", "Figure", "Rush", "Eyes", "Seek", "Hunt", "Clairvoyance", 
+    "Keep", "Statue", "Jack", "Lurk", "Peek", "Gloom", "Amarok"
+}
+
+local function isMonster(name)
+    for _, monster in pairs(MonsterNames) do
+        if name == monster then return true end
+    end
+    return false
+end
+
+local function createESP(part, parentModel)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "DOORS_ESP"
+    billboard.Adornee = part
+    billboard.Size = UDim2.new(0, 150, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.Parent = part
+
+    local bg = Instance.new("Frame")
+    bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    bg.BackgroundTransparency = 0.4
+    bg.BorderSizePixel = 0
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.Parent = billboard
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextStrokeTransparency = 0.5
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextScaled = true
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.TextXAlignment = Enum.TextXAlignment.Center
+    textLabel.TextYAlignment = Enum.TextYAlignment.Center
+    textLabel.Parent = billboard
+    
+    -- Добавляем Highlight для обводки
+    local highlight = Instance.new("Highlight")
+    highlight.FillTransparency = 0.9
+    highlight.LineThickness = 0.1
+    highlight.OutlineTransparency = 0
+    highlight.Parent = billboard
+    highlight.Adornee = part -- Highlight должен быть дочерним к Billboard или Adornee, но в Roblox лучше добавлять в саму модель
+
+    return { Billboard = billboard, Text = textLabel, Highlight = highlight }
+end
+
+local function updateEntity(entity)
+    if not entity:IsA("Model") and not entity:IsA("BasePart") then return end
+    
+    local rootPart = entity:FindFirstChild("HumanoidRootPart") or entity
+    if not rootPart then return end
+    
+    -- Проверка дистанции
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        local dist = (LocalPlayer.Character.HumanoidRootPart.Position - rootPart.Position).Magnitude
+        if dist > Config.MaxDistance then
+            if entity:FindFirstChild("DOORS_ESP") then
+                entity.DOORS_ESP.Billboard.Enabled = false
+            end
+            return
+        else
+            if entity:FindFirstChild("DOORS_ESP") then
+                entity.DOORS_ESP.Billboard.Enabled = true
+            end
+        end
+    end
+
+    local espData = entity:FindFirstChild("DOORS_ESP")
+    
+    -- Если ESP еще не создан
+    if not espData then
+        -- Создаем ESP на RootPart или на самом объекте
+        local targetPart = rootPart or entity
+        espData = createESP(targetPart, entity)
+        espData.Model = entity
+        
+        -- Сохраняем ссылку
+        entity:SetAttribute("ESPTarget", targetPart)
+        
+        -- Обновляем данные текста
+        local name = entity.Name
+        local color = Config.HighlightColor
+        local textInfo = name
+
+        if isMonster(name) then
+            color = Config.MonsterColor
+            textInfo = name .. " [M]"
+        elseif name:match("Door") or name:match("Cabinet") or name:match("Vase") then
+            color = Config.DoorColor
+            textInfo = name .. " [D]"
+        end
+        
+        -- Получаем здоровье если есть Humanoid
+        local humanoid = entity:FindFirstChildOfClass("Humanoid")
+        if humanoid and Config.ShowMonsters then
+             textInfo = textInfo .. "\nHP: " .. math.floor(humanoid.Health)
+        end
+
+        espData.Text.Text = textInfo
+        espData.Text.TextColor3 = color
+        espData.Highlight.FillColor = color
+        espData.Highlight.LineColor = color
+        
+        -- Привязываем Highlight к модели, чтобы он следовал за ней корректно
+        espData.Highlight.Adornee = targetPart
+    end
+end
+
+-- Обработка новых объектов
+Workspace.ChildAdded:Connect(function(child)
+    if child:IsA("Model") or child:IsA("BasePart") then
+        updateEntity(child)
+    end
+end)
+
+-- Инициализация существующих объектов
+for _, model in pairs(Workspace:GetChildren()) do
+    if model:IsA("Model") or model:IsA("BasePart") then
+        updateEntity(model)
+    end
+end
+
+-- Основной цикл обновления
+RunService.RenderStepped:Connect(function()
+    for _, model in pairs(Workspace:GetChildren()) do
+        if model:IsA("Model") or model:IsA("BasePart") then
+            updateEntity(model)
+            
+            -- Удаляем ESP если объект удален или вышел из зоны видимости (опционально, для чистоты)
+            if not model.Parent then
+                if model:FindFirstChild("DOORS_ESP") then
+                    model.DOORS_ESP.Billboard:Destroy()
+                end
+            end
+        end
+    end
+end)
+```
+
+### Как использовать в Xeno/Xenon:
+1. Открой игру **DOORS**.
+2. Нажми кнопку вызова консоли (обычно F9 или кнопка инжектора).
+3. Вставь код выше.
+4. Скрипт автоматически начнет работать.
+
+**Особенности для DOORS:**
+*   **Монстры** (Seek, Rush, Figure и др.) будут подсвечены **красным**.
+*   **Двери/Шкафы** будут подсвечены **оранжевым**.
+*   Отображается имя и HP (если у сущности есть Humanoid).
+*   Работает через `BillboardGui`, что является самым стабильным методом в современных версиях Roblox.
